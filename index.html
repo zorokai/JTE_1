@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Jeddah Tile Explorer + A* Routing</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    #map { height: 100vh; width: 100vw; }
+    #steps { position: absolute; top: 10px; left: 10px; background: white; padding: 10px; max-height: 200px; overflow-y: auto; z-index: 999; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="steps"><strong>Steps:</strong><ol id="stepList"></ol></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@turf/turf/turf.min.js"></script>
+  <script>
+    const map = L.map('map').setView([21.7, 39.2], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    const tileFiles = ["tile-16.geojson", "tile-17.geojson", "tile-21.geojson", "tile-22.geojson"];
+    let allRoads = [];
+    let graph = {};
+
+    tileFiles.forEach(tile => {
+      fetch(tile)
+        .then(res => res.json())
+        .then(data => {
+          data.features.forEach(f => {
+            if (f.geometry.type === 'LineString') {
+              const coords = f.geometry.coordinates;
+              for (let i = 0; i < coords.length - 1; i++) {
+                const keyA = coords[i].join(',');
+                const keyB = coords[i + 1].join(',');
+                const dist = turf.distance(turf.point(coords[i]), turf.point(coords[i + 1]));
+                if (!graph[keyA]) graph[keyA] = [];
+                if (!graph[keyB]) graph[keyB] = [];
+                graph[keyA].push({ to: keyB, weight: dist, road: f.properties?.name || 'Unnamed road' });
+                graph[keyB].push({ to: keyA, weight: dist, road: f.properties?.name || 'Unnamed road' });
+              }
+              allRoads.push(f);
+            }
+          });
+          L.geoJSON(data, { style: { color: "#3388ff", weight: 2 } }).addTo(map);
+        });
+    });
+
+    let waypoints = [];
+    let markers = [];
+    let routeLine = null;
+
+    map.on('click', function(e) {
+      const marker = L.circleMarker(e.latlng, { color: waypoints.length === 0 ? 'green' : (waypoints.length === 1 ? 'red' : 'purple') }).addTo(map);
+      marker.bindPopup(waypoints.length === 0 ? 'Start' : (waypoints.length === 1 ? 'End' : 'Waypoint')).openPopup();
+      markers.push(marker);
+      waypoints.push([e.latlng.lng, e.latlng.lat]);
+      if (waypoints.length >= 2) {
+        const route = calculateFullRoute(waypoints);
+        if (route) {
+          if (routeLine) map.removeLayer(routeLine);
+          routeLine = L.geoJSON(route.line, { style: { color: 'orange', weight: 4 } }).addTo(map);
+          displaySteps(route.steps);
+        } else {
+          alert("🚫 No route found.");
+        }
+      }
+    });
+
+    function displaySteps(steps) {
+      const stepList = document.getElementById("stepList");
+      stepList.innerHTML = "";
+      steps.forEach((step, i) => {
+        const li = document.createElement("li");
+        li.textContent = `Follow ${step.road} for ${step.dist.toFixed(3)} km`;
+        stepList.appendChild(li);
+      });
+    }
+
+    function calculateFullRoute(points) {
+      let fullCoords = [];
+      let steps = [];
+      for (let i = 0; i < points.length - 1; i++) {
+        const result = aStar(points[i], points[i + 1]);
+        if (!result) return null;
+        fullCoords = fullCoords.concat(result.coords);
+        steps = steps.concat(result.steps);
+      }
+      return { line: turf.lineString(fullCoords), steps };
+    }
+
+    function aStar(startCoord, endCoord) {
+      const startKey = findNearestNode(startCoord);
+      const endKey = findNearestNode(endCoord);
+      if (!startKey || !endKey) return null;
+
+      let openSet = new Set([startKey]);
+      let cameFrom = {};
+      let gScore = { [startKey]: 0 };
+      let fScore = { [startKey]: turf.distance(toPoint(startKey), toPoint(endKey)) };
+
+      while (openSet.size > 0) {
+        let current = [...openSet].reduce((a, b) => fScore[a] < fScore[b] ? a : b);
+        if (current === endKey) {
+          let coords = [fromKey(current)];
+          let steps = [];
+          while (cameFrom[current]) {
+            let prev = cameFrom[current];
+            let seg = graph[prev].find(x => x.to === current);
+            coords.unshift(fromKey(prev));
+            steps.unshift({ road: seg.road, dist: seg.weight });
+            current = prev;
+          }
+          return { coords, steps };
+        }
+        openSet.delete(current);
+        for (let neighbor of graph[current]) {
+          let tentativeG = gScore[current] + neighbor.weight;
+          if (tentativeG < (gScore[neighbor.to] || Infinity)) {
+            cameFrom[neighbor.to] = current;
+            gScore[neighbor.to] = tentativeG;
+            fScore[neighbor.to] = tentativeG + turf.distance(toPoint(neighbor.to), toPoint(endKey));
+            openSet.add(neighbor.to);
+          }
+        }
+      }
+      return null;
+    }
+
+    function findNearestNode(coord) {
+      let minDist = Infinity;
+      let nearest = null;
+      const pt = turf.point(coord);
+      for (let node in graph) {
+        const dist = turf.distance(pt, toPoint(node));
+        if (dist < minDist) {
+          minDist = dist;
+          nearest = node;
+        }
+      }
+      return nearest;
+    }
+
+    function toPoint(key) {
+      const [lng, lat] = key.split(",").map(Number);
+      return turf.point([lng, lat]);
+    }
+
+    function fromKey(key) {
+      return key.split(",").map(Number);
+    }
+  </script>
+</body>
+</html>
