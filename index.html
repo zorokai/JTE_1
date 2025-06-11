@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Route Finder (Improved)</title>
+  <title>Jeddah Route Finder (Debug Version)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -23,7 +23,7 @@
 <div id="map"></div>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-const SNAP_RADIUS = 0.0002; // ~20 meters
+const SNAP_RADIUS = 0.0005; // increased snap radius (~55m)
 let map = L.map('map').setView([21.65, 39.2], 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
@@ -31,6 +31,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 let graph = {}, startPoint = null, endPoint = null;
 let startMarker = null, endMarker = null;
+let snapStartMarker = null, snapEndMarker = null;
 let allCoords = new Set();
 
 function toId(coord) {
@@ -151,9 +152,27 @@ document.getElementById('routeBtn').onclick = function() {
   if (!startPoint || !endPoint) return alert("Select start and end points first.");
   let startId = getClosestNode(startPoint);
   let endId = getClosestNode(endPoint);
+
+  console.log("Start snapped to:", startId);
+  console.log("End snapped to:", endId);
+
+  if (snapStartMarker) map.removeLayer(snapStartMarker);
+  if (snapEndMarker) map.removeLayer(snapEndMarker);
+
+  snapStartMarker = L.circleMarker(startId.split(',').map(Number), {
+    color: 'green', radius: 6
+  }).addTo(map).bindPopup("Snapped Start").openPopup();
+
+  snapEndMarker = L.circleMarker(endId.split(',').map(Number), {
+    color: 'red', radius: 6
+  }).addTo(map).bindPopup("Snapped End").openPopup();
+
   if (!graph[startId] || !graph[endId]) return alert("Start or End point not near any road segment.");
+
   let path = dijkstra(startId, endId);
+  console.log("Path length:", path.length);
   if (path.length < 2) return alert("No path found.");
+
   L.polyline(path, { color: 'blue' }).addTo(map);
 };
 </script>
