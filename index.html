@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Route Finder (Debug Version)</title>
+  <title>Jeddah Route Finder (Debug + Same Point Fix)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -23,7 +23,7 @@
 <div id="map"></div>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-const SNAP_RADIUS = 0.0005; // increased snap radius (~55m)
+const SNAP_RADIUS = 0.0005;
 let map = L.map('map').setView([21.65, 39.2], 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
@@ -168,6 +168,13 @@ document.getElementById('routeBtn').onclick = function() {
   }).addTo(map).bindPopup("Snapped End").openPopup();
 
   if (!graph[startId] || !graph[endId]) return alert("Start or End point not near any road segment.");
+
+  if (startId === endId) {
+    alert("Start and End are the same location.");
+    return L.circleMarker(startId.split(',').map(Number), {
+      color: 'blue', radius: 4
+    }).addTo(map).bindPopup("Same Point").openPopup();
+  }
 
   let path = dijkstra(startId, endId);
   console.log("Path length:", path.length);
