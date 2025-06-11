@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Tile Explorer + A* Routing (Optimized)</title>
+  <title>Jeddah Tile Explorer + A* Routing (RBush Optimized)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
@@ -15,6 +15,7 @@
   <div id="steps"><strong>Steps:</strong><ol id="stepList"></ol></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/@turf/turf/turf.min.js"></script>
+  <script src="https://unpkg.com/rbush@3.0.1/rbush.min.js"></script>
   <script>
     const map = L.map('map').setView([21.7, 39.2], 11);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -25,8 +26,8 @@
     const tileFiles = ["tile-16.geojson", "tile-17.geojson", "tile-21.geojson", "tile-22.geojson"];
     let allRoads = [];
     let graph = {};
-    let nodeIndex = [];
     let graphReady = false;
+    const nodeTree = new rbush();
 
     Promise.all(tileFiles.map(tile => fetch(tile).then(res => res.json()))).then(tileData => {
       tileData.forEach(data => {
@@ -37,8 +38,14 @@
               const keyA = coords[i].join(',');
               const keyB = coords[i + 1].join(',');
               const dist = turf.distance(turf.point(coords[i]), turf.point(coords[i + 1]));
-              if (!graph[keyA]) { graph[keyA] = []; nodeIndex.push(coords[i]); }
-              if (!graph[keyB]) { graph[keyB] = []; nodeIndex.push(coords[i + 1]); }
+              if (!graph[keyA]) {
+                graph[keyA] = [];
+                nodeTree.insert({ minX: coords[i][0], minY: coords[i][1], maxX: coords[i][0], maxY: coords[i][1], key: keyA });
+              }
+              if (!graph[keyB]) {
+                graph[keyB] = [];
+                nodeTree.insert({ minX: coords[i + 1][0], minY: coords[i + 1][1], maxX: coords[i + 1][0], maxY: coords[i + 1][1], key: keyB });
+              }
               graph[keyA].push({ to: keyB, weight: dist, road: f.properties?.name || 'Unnamed road' });
               graph[keyB].push({ to: keyA, weight: dist, road: f.properties?.name || 'Unnamed road' });
             }
@@ -64,14 +71,16 @@
       markers.push(marker);
       waypoints.push([e.latlng.lng, e.latlng.lat]);
       if (waypoints.length >= 2) {
-        const route = calculateFullRoute(waypoints);
-        if (route) {
-          if (routeLine) map.removeLayer(routeLine);
-          routeLine = L.geoJSON(route.line, { style: { color: 'orange', weight: 4 } }).addTo(map);
-          displaySteps(route.steps);
-        } else {
-          alert("🚫 No route found.");
-        }
+        setTimeout(() => {
+          const route = calculateFullRoute(waypoints);
+          if (route) {
+            if (routeLine) map.removeLayer(routeLine);
+            routeLine = L.geoJSON(route.line, { style: { color: 'orange', weight: 4 } }).addTo(map);
+            displaySteps(route.steps);
+          } else {
+            alert("🚫 No route found.");
+          }
+        }, 10);
       }
     });
 
@@ -136,18 +145,10 @@
     }
 
     function findNearestNode(coord) {
-      let minDist = Infinity;
-      let nearest = null;
-      const pt = turf.point(coord);
-      for (let i = 0; i < nodeIndex.length; i++) {
-        const nodePt = turf.point(nodeIndex[i]);
-        const dist = turf.distance(pt, nodePt);
-        if (dist < minDist) {
-          minDist = dist;
-          nearest = nodeIndex[i].join(',');
-        }
-      }
-      return nearest;
+      const nearest = nodeTree.knn({
+        minX: coord[0], minY: coord[1], maxX: coord[0], maxY: coord[1]
+      }, 1)[0];
+      return nearest?.key || null;
     }
 
     function toPoint(key) {
