@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Tile Explorer + A* Routing</title>
+  <title>Jeddah Tile Explorer + A* Routing (Optimized)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
@@ -25,28 +25,29 @@
     const tileFiles = ["tile-16.geojson", "tile-17.geojson", "tile-21.geojson", "tile-22.geojson"];
     let allRoads = [];
     let graph = {};
+    let nodeIndex = [];
+    let graphReady = false;
 
-    tileFiles.forEach(tile => {
-      fetch(tile)
-        .then(res => res.json())
-        .then(data => {
-          data.features.forEach(f => {
-            if (f.geometry.type === 'LineString') {
-              const coords = f.geometry.coordinates;
-              for (let i = 0; i < coords.length - 1; i++) {
-                const keyA = coords[i].join(',');
-                const keyB = coords[i + 1].join(',');
-                const dist = turf.distance(turf.point(coords[i]), turf.point(coords[i + 1]));
-                if (!graph[keyA]) graph[keyA] = [];
-                if (!graph[keyB]) graph[keyB] = [];
-                graph[keyA].push({ to: keyB, weight: dist, road: f.properties?.name || 'Unnamed road' });
-                graph[keyB].push({ to: keyA, weight: dist, road: f.properties?.name || 'Unnamed road' });
-              }
-              allRoads.push(f);
+    Promise.all(tileFiles.map(tile => fetch(tile).then(res => res.json()))).then(tileData => {
+      tileData.forEach(data => {
+        data.features.forEach(f => {
+          if (f.geometry.type === 'LineString') {
+            const coords = f.geometry.coordinates;
+            for (let i = 0; i < coords.length - 1; i++) {
+              const keyA = coords[i].join(',');
+              const keyB = coords[i + 1].join(',');
+              const dist = turf.distance(turf.point(coords[i]), turf.point(coords[i + 1]));
+              if (!graph[keyA]) { graph[keyA] = []; nodeIndex.push(coords[i]); }
+              if (!graph[keyB]) { graph[keyB] = []; nodeIndex.push(coords[i + 1]); }
+              graph[keyA].push({ to: keyB, weight: dist, road: f.properties?.name || 'Unnamed road' });
+              graph[keyB].push({ to: keyA, weight: dist, road: f.properties?.name || 'Unnamed road' });
             }
-          });
-          L.geoJSON(data, { style: { color: "#3388ff", weight: 2 } }).addTo(map);
+            allRoads.push(f);
+          }
         });
+        L.geoJSON(data, { style: { color: "#3388ff", weight: 2 } }).addTo(map);
+      });
+      graphReady = true;
     });
 
     let waypoints = [];
@@ -54,6 +55,10 @@
     let routeLine = null;
 
     map.on('click', function(e) {
+      if (!graphReady) {
+        alert("⏳ Please wait — loading road data...");
+        return;
+      }
       const marker = L.circleMarker(e.latlng, { color: waypoints.length === 0 ? 'green' : (waypoints.length === 1 ? 'red' : 'purple') }).addTo(map);
       marker.bindPopup(waypoints.length === 0 ? 'Start' : (waypoints.length === 1 ? 'End' : 'Waypoint')).openPopup();
       markers.push(marker);
@@ -134,11 +139,12 @@
       let minDist = Infinity;
       let nearest = null;
       const pt = turf.point(coord);
-      for (let node in graph) {
-        const dist = turf.distance(pt, toPoint(node));
+      for (let i = 0; i < nodeIndex.length; i++) {
+        const nodePt = turf.point(nodeIndex[i]);
+        const dist = turf.distance(pt, nodePt);
         if (dist < minDist) {
           minDist = dist;
-          nearest = node;
+          nearest = nodeIndex[i].join(',');
         }
       }
       return nearest;
