@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Route Finder (High Precision)</title>
+  <title>Jeddah Route Finder (Persistent Tiles)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -20,6 +20,7 @@
   <button id="endBtn">Select End</button>
   <button id="routeBtn">Find Route</button>
   <button id="debugBtn">Toggle Graph Debug</button>
+  <button id="clearBtn">Clear Saved Tiles</button>
 </div>
 <div id="map"></div>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -132,16 +133,36 @@ function dijkstra(start, end) {
   return route.map(p => p.split(',').map(Number));
 }
 
+function loadFromStorage() {
+  const files = Object.keys(localStorage).filter(k => k.startsWith('geojson:'));
+  files.forEach(key => {
+    try {
+      const data = JSON.parse(localStorage.getItem(key));
+      handleGeoJSON(data);
+    } catch (e) {
+      console.error("Failed to load", key);
+    }
+  });
+}
+
 document.getElementById('fileInput').addEventListener('change', function (e) {
   for (let file of e.target.files) {
     let reader = new FileReader();
     reader.onload = function (e) {
       let geo = JSON.parse(e.target.result);
+      localStorage.setItem("geojson:" + file.name, JSON.stringify(geo));
       handleGeoJSON(geo);
     };
     reader.readAsText(file);
   }
 });
+
+document.getElementById('clearBtn').onclick = function () {
+  Object.keys(localStorage).forEach(key => {
+    if (key.startsWith("geojson:")) localStorage.removeItem(key);
+  });
+  alert("Saved tiles cleared. Please refresh.");
+};
 
 document.getElementById('startBtn').onclick = function () {
   map.once('click', function (e) {
@@ -188,6 +209,9 @@ document.getElementById('routeBtn').onclick = function () {
   if (route.length < 2) return alert("No path found.");
   L.polyline(route, { color: 'blue' }).addTo(map);
 };
+
+// Load from cache on startup
+loadFromStorage();
 </script>
 </body>
 </html>
