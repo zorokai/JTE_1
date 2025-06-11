@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Route Finder (Debug + Same Point Fix)</title>
+  <title>Jeddah Route Finder (Graph Debug)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -19,20 +19,20 @@
   <button id="startBtn">Select Start</button>
   <button id="endBtn">Select End</button>
   <button id="routeBtn">Find Route</button>
+  <button id="debugBtn">Toggle Graph Debug</button>
 </div>
 <div id="map"></div>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
 const SNAP_RADIUS = 0.0005;
 let map = L.map('map').setView([21.65, 39.2], 11);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
 let graph = {}, startPoint = null, endPoint = null;
 let startMarker = null, endMarker = null;
 let snapStartMarker = null, snapEndMarker = null;
 let allCoords = new Set();
+let debugLayer = L.layerGroup().addTo(map);
 
 function toId(coord) {
   return coord[0].toFixed(6) + "," + coord[1].toFixed(6);
@@ -64,6 +64,17 @@ function addToGraph(a, b) {
   graph[aid].push({ coord: b, id: bid });
   graph[bid] = graph[bid] || [];
   graph[bid].push({ coord: a, id: aid });
+}
+
+function drawGraph() {
+  debugLayer.clearLayers();
+  for (let aid in graph) {
+    let a = aid.split(',').map(Number);
+    L.circleMarker(a, { radius: 2, color: '#999' }).addTo(debugLayer);
+    for (let { coord: b } of graph[aid]) {
+      L.polyline([a, b], { color: '#ccc', weight: 1 }).addTo(debugLayer);
+    }
+  }
 }
 
 function handleGeoJSON(data) {
@@ -99,7 +110,6 @@ function dijkstra(start, end) {
   let dist = {}, prev = {}, Q = new Set(Object.keys(graph));
   for (let v of Q) dist[v] = Infinity;
   dist[start] = 0;
-
   while (Q.size > 0) {
     let u = [...Q].reduce((a, b) => dist[a] < dist[b] ? a : b);
     Q.delete(u);
@@ -112,7 +122,6 @@ function dijkstra(start, end) {
       }
     }
   }
-
   let path = [], u = end;
   while (u) {
     path.unshift(u);
@@ -133,53 +142,66 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
 });
 
 document.getElementById('startBtn').onclick = function() {
-  map.once('click', function(e) {
-    startPoint = e.latlng;
-    if (startMarker) map.removeLayer(startMarker);
-    startMarker = L.marker(e.latlng).addTo(map).bindPopup("Start").openPopup();
+  map.once('mousemove', function(preview) {
+    const temp = L.circleMarker(preview.latlng, { radius: 5, color: 'green' }).addTo(map);
+    const move = e => temp.setLatLng(e.latlng);
+    const click = e => {
+      map.off('mousemove', move);
+      map.off('click', click);
+      map.removeLayer(temp);
+      startPoint = e.latlng;
+      if (startMarker) map.removeLayer(startMarker);
+      startMarker = L.marker(e.latlng).addTo(map).bindPopup("Start").openPopup();
+    };
+    map.on('mousemove', move);
+    map.on('click', click);
   });
 };
 
 document.getElementById('endBtn').onclick = function() {
-  map.once('click', function(e) {
-    endPoint = e.latlng;
-    if (endMarker) map.removeLayer(endMarker);
-    endMarker = L.marker(e.latlng).addTo(map).bindPopup("End").openPopup();
+  map.once('mousemove', function(preview) {
+    const temp = L.circleMarker(preview.latlng, { radius: 5, color: 'red' }).addTo(map);
+    const move = e => temp.setLatLng(e.latlng);
+    const click = e => {
+      map.off('mousemove', move);
+      map.off('click', click);
+      map.removeLayer(temp);
+      endPoint = e.latlng;
+      if (endMarker) map.removeLayer(endMarker);
+      endMarker = L.marker(e.latlng).addTo(map).bindPopup("End").openPopup();
+    };
+    map.on('mousemove', move);
+    map.on('click', click);
   });
+};
+
+document.getElementById('debugBtn').onclick = function() {
+  if (map.hasLayer(debugLayer)) {
+    map.removeLayer(debugLayer);
+  } else {
+    drawGraph();
+    map.addLayer(debugLayer);
+  }
 };
 
 document.getElementById('routeBtn').onclick = function() {
   if (!startPoint || !endPoint) return alert("Select start and end points first.");
   let startId = getClosestNode(startPoint);
   let endId = getClosestNode(endPoint);
-
   console.log("Start snapped to:", startId);
   console.log("End snapped to:", endId);
-
   if (snapStartMarker) map.removeLayer(snapStartMarker);
   if (snapEndMarker) map.removeLayer(snapEndMarker);
-
-  snapStartMarker = L.circleMarker(startId.split(',').map(Number), {
-    color: 'green', radius: 6
-  }).addTo(map).bindPopup("Snapped Start").openPopup();
-
-  snapEndMarker = L.circleMarker(endId.split(',').map(Number), {
-    color: 'red', radius: 6
-  }).addTo(map).bindPopup("Snapped End").openPopup();
-
+  snapStartMarker = L.circleMarker(startId.split(',').map(Number), { color: 'green', radius: 6 }).addTo(map).bindPopup("Snapped Start").openPopup();
+  snapEndMarker = L.circleMarker(endId.split(',').map(Number), { color: 'red', radius: 6 }).addTo(map).bindPopup("Snapped End").openPopup();
   if (!graph[startId] || !graph[endId]) return alert("Start or End point not near any road segment.");
-
   if (startId === endId) {
     alert("Start and End are the same location.");
-    return L.circleMarker(startId.split(',').map(Number), {
-      color: 'blue', radius: 4
-    }).addTo(map).bindPopup("Same Point").openPopup();
+    return L.circleMarker(startId.split(',').map(Number), { color: 'blue', radius: 4 }).addTo(map).bindPopup("Same Point").openPopup();
   }
-
   let path = dijkstra(startId, endId);
   console.log("Path length:", path.length);
   if (path.length < 2) return alert("No path found.");
-
   L.polyline(path, { color: 'blue' }).addTo(map);
 };
 </script>
