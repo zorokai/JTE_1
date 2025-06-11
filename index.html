@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Route Finder (Path Along Roads)</title>
+  <title>Jeddah Route Finder (High Precision)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -28,7 +28,7 @@ const SNAP_RADIUS = 0.0005;
 let map = L.map('map').setView([21.65, 39.2], 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-let graph = {}, roadSegments = {}, startPoint = null, endPoint = null;
+let graph = {}, startPoint = null, endPoint = null;
 let startMarker = null, endMarker = null;
 let snapStartMarker = null, snapEndMarker = null;
 let allCoords = new Set();
@@ -40,7 +40,7 @@ function toId(coord) {
 
 function distance(a, b) {
   const dx = a[0] - b[0], dy = a[1] - b[1];
-  return Math.sqrt(dx*dx + dy*dy);
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 function findNearby(coord) {
@@ -56,14 +56,14 @@ function findNearby(coord) {
   return best;
 }
 
-function addToGraph(a, b, segment) {
+function addToGraph(a, b) {
   let aid = toId(a), bid = toId(b);
   allCoords.add(aid);
   allCoords.add(bid);
   graph[aid] = graph[aid] || [];
-  graph[aid].push({ coord: b, id: bid, path: segment });
+  graph[aid].push({ coord: b, id: bid });
   graph[bid] = graph[bid] || [];
-  graph[bid].push({ coord: a, id: aid, path: [...segment].reverse() });
+  graph[bid].push({ coord: a, id: aid });
 }
 
 function drawGraph() {
@@ -82,12 +82,11 @@ function handleGeoJSON(data) {
     onEachFeature: function (feature) {
       let coords = feature.geometry.coordinates;
       if (feature.geometry.type === "LineString") {
-        for (let i = 0; i < coords.length - 1; i++) {
-          let a = [coords[i][1], coords[i][0]];
-          let b = [coords[i+1][1], coords[i+1][0]];
-          let snapA = findNearby(a) || a;
-          let snapB = findNearby(b) || b;
-          addToGraph(snapA, snapB, [[snapA[0], snapA[1]], [snapB[0], snapB[1]]]);
+        let points = coords.map(c => [c[1], c[0]]);
+        for (let i = 0; i < points.length - 1; i++) {
+          let a = findNearby(points[i]) || points[i];
+          let b = findNearby(points[i + 1]) || points[i + 1];
+          addToGraph(a, b);
         }
       }
     }
@@ -111,7 +110,6 @@ function dijkstra(start, end) {
   let dist = {}, prev = {}, Q = new Set(Object.keys(graph));
   for (let v of Q) dist[v] = Infinity;
   dist[start] = 0;
-
   while (Q.size > 0) {
     let u = [...Q].reduce((a, b) => dist[a] < dist[b] ? a : b);
     Q.delete(u);
@@ -121,24 +119,23 @@ function dijkstra(start, end) {
       let alt = dist[u] + distance(u.split(',').map(Number), neighbor.coord);
       if (alt < dist[v]) {
         dist[v] = alt;
-        prev[v] = { id: u, path: neighbor.path };
+        prev[v] = u;
       }
     }
   }
-
   let route = [], u = end;
   while (u && prev[u]) {
-    route.unshift(...prev[u].path.slice(1));
-    u = prev[u].id;
+    route.unshift(u);
+    u = prev[u];
   }
-  route.unshift(u.split(',').map(Number));
-  return route;
+  route.unshift(start);
+  return route.map(p => p.split(',').map(Number));
 }
 
-document.getElementById('fileInput').addEventListener('change', function(e) {
+document.getElementById('fileInput').addEventListener('change', function (e) {
   for (let file of e.target.files) {
     let reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
       let geo = JSON.parse(e.target.result);
       handleGeoJSON(geo);
     };
@@ -146,41 +143,23 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
   }
 });
 
-document.getElementById('startBtn').onclick = function() {
-  map.once('mousemove', function(preview) {
-    const temp = L.circleMarker(preview.latlng, { radius: 5, color: 'green' }).addTo(map);
-    const move = e => temp.setLatLng(e.latlng);
-    const click = e => {
-      map.off('mousemove', move);
-      map.off('click', click);
-      map.removeLayer(temp);
-      startPoint = e.latlng;
-      if (startMarker) map.removeLayer(startMarker);
-      startMarker = L.marker(e.latlng).addTo(map).bindPopup("Start").openPopup();
-    };
-    map.on('mousemove', move);
-    map.on('click', click);
+document.getElementById('startBtn').onclick = function () {
+  map.once('click', function (e) {
+    startPoint = e.latlng;
+    if (startMarker) map.removeLayer(startMarker);
+    startMarker = L.marker(e.latlng).addTo(map).bindPopup("Start").openPopup();
   });
 };
 
-document.getElementById('endBtn').onclick = function() {
-  map.once('mousemove', function(preview) {
-    const temp = L.circleMarker(preview.latlng, { radius: 5, color: 'red' }).addTo(map);
-    const move = e => temp.setLatLng(e.latlng);
-    const click = e => {
-      map.off('mousemove', move);
-      map.off('click', click);
-      map.removeLayer(temp);
-      endPoint = e.latlng;
-      if (endMarker) map.removeLayer(endMarker);
-      endMarker = L.marker(e.latlng).addTo(map).bindPopup("End").openPopup();
-    };
-    map.on('mousemove', move);
-    map.on('click', click);
+document.getElementById('endBtn').onclick = function () {
+  map.once('click', function (e) {
+    endPoint = e.latlng;
+    if (endMarker) map.removeLayer(endMarker);
+    endMarker = L.marker(e.latlng).addTo(map).bindPopup("End").openPopup();
   });
 };
 
-document.getElementById('debugBtn').onclick = function() {
+document.getElementById('debugBtn').onclick = function () {
   if (map.hasLayer(debugLayer)) {
     map.removeLayer(debugLayer);
   } else {
@@ -189,7 +168,7 @@ document.getElementById('debugBtn').onclick = function() {
   }
 };
 
-document.getElementById('routeBtn').onclick = function() {
+document.getElementById('routeBtn').onclick = function () {
   if (!startPoint || !endPoint) return alert("Select start and end points first.");
   let startId = getClosestNode(startPoint);
   let endId = getClosestNode(endPoint);
