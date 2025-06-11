@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Route Finder (Fix Coord Flip)</title>
+  <title>Jeddah Route Finder (Path Along Roads)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -28,7 +28,7 @@ const SNAP_RADIUS = 0.0005;
 let map = L.map('map').setView([21.65, 39.2], 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-let graph = {}, startPoint = null, endPoint = null;
+let graph = {}, roadSegments = {}, startPoint = null, endPoint = null;
 let startMarker = null, endMarker = null;
 let snapStartMarker = null, snapEndMarker = null;
 let allCoords = new Set();
@@ -56,14 +56,14 @@ function findNearby(coord) {
   return best;
 }
 
-function addToGraph(a, b) {
+function addToGraph(a, b, segment) {
   let aid = toId(a), bid = toId(b);
   allCoords.add(aid);
   allCoords.add(bid);
   graph[aid] = graph[aid] || [];
-  graph[aid].push({ coord: b, id: bid });
+  graph[aid].push({ coord: b, id: bid, path: segment });
   graph[bid] = graph[bid] || [];
-  graph[bid].push({ coord: a, id: aid });
+  graph[bid].push({ coord: a, id: aid, path: [...segment].reverse() });
 }
 
 function drawGraph() {
@@ -83,11 +83,11 @@ function handleGeoJSON(data) {
       let coords = feature.geometry.coordinates;
       if (feature.geometry.type === "LineString") {
         for (let i = 0; i < coords.length - 1; i++) {
-          let a = [coords[i][1], coords[i][0]];   // flip [lon, lat] → [lat, lon]
+          let a = [coords[i][1], coords[i][0]];
           let b = [coords[i+1][1], coords[i+1][0]];
           let snapA = findNearby(a) || a;
           let snapB = findNearby(b) || b;
-          addToGraph(snapA, snapB);
+          addToGraph(snapA, snapB, [[snapA[0], snapA[1]], [snapB[0], snapB[1]]]);
         }
       }
     }
@@ -111,24 +111,28 @@ function dijkstra(start, end) {
   let dist = {}, prev = {}, Q = new Set(Object.keys(graph));
   for (let v of Q) dist[v] = Infinity;
   dist[start] = 0;
+
   while (Q.size > 0) {
     let u = [...Q].reduce((a, b) => dist[a] < dist[b] ? a : b);
     Q.delete(u);
     if (u === end) break;
-    for (let { id: v, coord } of graph[u]) {
-      let alt = dist[u] + distance(u.split(',').map(Number), coord);
+    for (let neighbor of graph[u]) {
+      let v = neighbor.id;
+      let alt = dist[u] + distance(u.split(',').map(Number), neighbor.coord);
       if (alt < dist[v]) {
         dist[v] = alt;
-        prev[v] = u;
+        prev[v] = { id: u, path: neighbor.path };
       }
     }
   }
-  let path = [], u = end;
-  while (u) {
-    path.unshift(u);
-    u = prev[u];
+
+  let route = [], u = end;
+  while (u && prev[u]) {
+    route.unshift(...prev[u].path.slice(1));
+    u = prev[u].id;
   }
-  return path.map(p => p.split(',').map(Number));
+  route.unshift(u.split(',').map(Number));
+  return route;
 }
 
 document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -200,10 +204,10 @@ document.getElementById('routeBtn').onclick = function() {
     alert("Start and End are the same location.");
     return L.circleMarker(startId.split(',').map(Number), { color: 'blue', radius: 4 }).addTo(map).bindPopup("Same Point").openPopup();
   }
-  let path = dijkstra(startId, endId);
-  console.log("Path length:", path.length);
-  if (path.length < 2) return alert("No path found.");
-  L.polyline(path, { color: 'blue' }).addTo(map);
+  let route = dijkstra(startId, endId);
+  console.log("Path length:", route.length);
+  if (route.length < 2) return alert("No path found.");
+  L.polyline(route, { color: 'blue' }).addTo(map);
 };
 </script>
 </body>
