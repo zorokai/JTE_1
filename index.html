@@ -2,17 +2,19 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Tile Explorer + A* Routing (RBush Optimized)</title>
+  <title>Jeddah Maze Routing + A*</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     #map { height: 100vh; width: 100vw; }
     #steps { position: absolute; top: 10px; left: 10px; background: white; padding: 10px; max-height: 200px; overflow-y: auto; z-index: 999; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
+    .block-button { position: absolute; top: 220px; left: 10px; z-index: 999; background: white; padding: 6px; border: 1px solid #ccc; cursor: pointer; font-size: 14px; }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div id="steps"><strong>Steps:</strong><ol id="stepList"></ol></div>
+  <div class="block-button" onclick="toggleBlocking()">🔧 Toggle Block Mode</div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/@turf/turf/turf.min.js"></script>
   <script src="https://unpkg.com/rbush@3.0.1/rbush.min.js"></script>
@@ -24,10 +26,19 @@
     }).addTo(map);
 
     const tileFiles = ["tile-16.geojson", "tile-17.geojson", "tile-21.geojson", "tile-22.geojson"];
-    let allRoads = [];
-    let graph = {};
-    let graphReady = false;
+    let allRoads = [], graph = {}, blockedEdges = new Set();
     const nodeTree = new rbush();
+    let graphReady = false;
+    let blockMode = false;
+
+    function toggleBlocking() {
+      blockMode = !blockMode;
+      alert(blockMode ? "🟥 Click a road to block it (like a wall)." : "✅ Normal mode restored.");
+    }
+
+    function keyEdge(a, b) {
+      return a < b ? `${a}|${b}` : `${b}|${a}`;
+    }
 
     Promise.all(tileFiles.map(tile => fetch(tile).then(res => res.json()))).then(tileData => {
       tileData.forEach(data => {
@@ -35,37 +46,42 @@
           if (f.geometry.type === 'LineString') {
             const coords = f.geometry.coordinates;
             for (let i = 0; i < coords.length - 1; i++) {
-              const keyA = coords[i].join(',');
-              const keyB = coords[i + 1].join(',');
-              const dist = turf.distance(turf.point(coords[i]), turf.point(coords[i + 1]));
+              const a = coords[i], b = coords[i + 1];
+              const keyA = a.join(','), keyB = b.join(',');
+              const dist = turf.distance(turf.point(a), turf.point(b));
               if (!graph[keyA]) {
                 graph[keyA] = [];
-                nodeTree.insert({ minX: coords[i][0], minY: coords[i][1], maxX: coords[i][0], maxY: coords[i][1], key: keyA });
+                nodeTree.insert({ minX: a[0], minY: a[1], maxX: a[0], maxY: a[1], key: keyA });
               }
               if (!graph[keyB]) {
                 graph[keyB] = [];
-                nodeTree.insert({ minX: coords[i + 1][0], minY: coords[i + 1][1], maxX: coords[i + 1][0], maxY: coords[i + 1][1], key: keyB });
+                nodeTree.insert({ minX: b[0], minY: b[1], maxX: b[0], maxY: b[1], key: keyB });
               }
               graph[keyA].push({ to: keyB, weight: dist, road: f.properties?.name || 'Unnamed road' });
               graph[keyB].push({ to: keyA, weight: dist, road: f.properties?.name || 'Unnamed road' });
             }
+            const layer = L.geoJSON(f, {
+              style: { color: "#3388ff", weight: 2 }
+            }).addTo(map);
+            layer.on('click', () => {
+              if (!blockMode) return;
+              const coords = f.geometry.coordinates;
+              for (let i = 0; i < coords.length - 1; i++) {
+                const keyA = coords[i].join(','), keyB = coords[i + 1].join(',');
+                blockedEdges.add(keyEdge(keyA, keyB));
+              }
+              layer.setStyle({ color: 'gray', dashArray: '4 4' });
+            });
             allRoads.push(f);
           }
         });
-        L.geoJSON(data, { style: { color: "#3388ff", weight: 2 } }).addTo(map);
       });
       graphReady = true;
     });
 
-    let waypoints = [];
-    let markers = [];
-    let routeLine = null;
-
+    let waypoints = [], markers = [], routeLine = null;
     map.on('click', function(e) {
-      if (!graphReady) {
-        alert("⏳ Please wait — loading road data...");
-        return;
-      }
+      if (blockMode || !graphReady) return;
       const marker = L.circleMarker(e.latlng, { color: waypoints.length === 0 ? 'green' : (waypoints.length === 1 ? 'red' : 'purple') }).addTo(map);
       marker.bindPopup(waypoints.length === 0 ? 'Start' : (waypoints.length === 1 ? 'End' : 'Waypoint')).openPopup();
       markers.push(marker);
@@ -132,6 +148,8 @@
         }
         openSet.delete(current);
         for (let neighbor of graph[current]) {
+          const edge = keyEdge(current, neighbor.to);
+          if (blockedEdges.has(edge)) continue;
           let tentativeG = gScore[current] + neighbor.weight;
           if (tentativeG < (gScore[neighbor.to] || Infinity)) {
             cameFrom[neighbor.to] = current;
