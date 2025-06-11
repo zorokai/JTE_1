@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Route Finder</title>
+  <title>Jeddah Route Finder (Improved)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -11,7 +11,6 @@
       position: absolute; top: 10px; left: 10px; z-index: 9999;
       background: white; padding: 10px; border-radius: 6px;
     }
-    .highlight { background: yellow; }
   </style>
 </head>
 <body>
@@ -24,18 +23,15 @@
 <div id="map"></div>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
+const SNAP_RADIUS = 0.0002; // ~20 meters
 let map = L.map('map').setView([21.65, 39.2], 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
 }).addTo(map);
 
-let graph = {}, features = [], startPoint = null, endPoint = null;
+let graph = {}, startPoint = null, endPoint = null;
 let startMarker = null, endMarker = null;
-
-function addToGraph(coords, id) {
-  graph[id] = graph[id] || [];
-  graph[id].push(coords);
-}
+let allCoords = new Set();
 
 function toId(coord) {
   return coord[0].toFixed(6) + "," + coord[1].toFixed(6);
@@ -44,6 +40,58 @@ function toId(coord) {
 function distance(a, b) {
   const dx = a[0] - b[0], dy = a[1] - b[1];
   return Math.sqrt(dx*dx + dy*dy);
+}
+
+function findNearby(coord) {
+  let min = Infinity, best = null;
+  for (let id of allCoords) {
+    let pt = id.split(',').map(Number);
+    let d = distance(coord, pt);
+    if (d < min && d < SNAP_RADIUS) {
+      min = d;
+      best = pt;
+    }
+  }
+  return best;
+}
+
+function addToGraph(a, b) {
+  let aid = toId(a), bid = toId(b);
+  allCoords.add(aid);
+  allCoords.add(bid);
+  graph[aid] = graph[aid] || [];
+  graph[aid].push({ coord: b, id: bid });
+  graph[bid] = graph[bid] || [];
+  graph[bid].push({ coord: a, id: aid });
+}
+
+function handleGeoJSON(data) {
+  L.geoJSON(data, {
+    onEachFeature: function (feature) {
+      let coords = feature.geometry.coordinates;
+      if (feature.geometry.type === "LineString") {
+        for (let i = 0; i < coords.length - 1; i++) {
+          let a = coords[i], b = coords[i+1];
+          let snapA = findNearby(a) || a;
+          let snapB = findNearby(b) || b;
+          addToGraph(snapA, snapB);
+        }
+      }
+    }
+  }).addTo(map);
+}
+
+function getClosestNode(latlng) {
+  let min = Infinity, closest = null;
+  for (let id of allCoords) {
+    let coord = id.split(',').map(Number);
+    let d = distance([latlng.lat, latlng.lng], coord);
+    if (d < min) {
+      min = d;
+      closest = id;
+    }
+  }
+  return closest;
 }
 
 function dijkstra(start, end) {
@@ -55,12 +103,11 @@ function dijkstra(start, end) {
     let u = [...Q].reduce((a, b) => dist[a] < dist[b] ? a : b);
     Q.delete(u);
     if (u === end) break;
-    for (let v of graph[u]) {
-      let alt = dist[u] + distance(u.split(',').map(Number), v);
-      let vid = toId(v);
-      if (alt < dist[vid]) {
-        dist[vid] = alt;
-        prev[vid] = u;
+    for (let { id: v, coord } of graph[u]) {
+      let alt = dist[u] + distance(u.split(',').map(Number), coord);
+      if (alt < dist[v]) {
+        dist[v] = alt;
+        prev[v] = u;
       }
     }
   }
@@ -71,31 +118,6 @@ function dijkstra(start, end) {
     u = prev[u];
   }
   return path.map(p => p.split(',').map(Number));
-}
-
-function handleGeoJSON(data) {
-  L.geoJSON(data, {
-    onEachFeature: function (feature) {
-      let coords = feature.geometry.coordinates;
-      if (feature.geometry.type === "LineString") {
-        for (let i = 0; i < coords.length - 1; i++) {
-          let a = coords[i], b = coords[i+1];
-          addToGraph(b, toId(a));
-          addToGraph(a, toId(b));
-        }
-      }
-    }
-  }).addTo(map);
-}
-
-function getClosestNode(latlng) {
-  let min = Infinity, closest = null;
-  for (let id in graph) {
-    let coord = id.split(',').map(Number);
-    let d = distance([latlng.lat, latlng.lng], coord);
-    if (d < min) { min = d; closest = id; }
-  }
-  return closest;
 }
 
 document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -113,7 +135,7 @@ document.getElementById('startBtn').onclick = function() {
   map.once('click', function(e) {
     startPoint = e.latlng;
     if (startMarker) map.removeLayer(startMarker);
-    startMarker = L.marker(e.latlng, {color: 'green'}).addTo(map).bindPopup("Start").openPopup();
+    startMarker = L.marker(e.latlng).addTo(map).bindPopup("Start").openPopup();
   });
 };
 
@@ -121,7 +143,7 @@ document.getElementById('endBtn').onclick = function() {
   map.once('click', function(e) {
     endPoint = e.latlng;
     if (endMarker) map.removeLayer(endMarker);
-    endMarker = L.marker(e.latlng, {color: 'red'}).addTo(map).bindPopup("End").openPopup();
+    endMarker = L.marker(e.latlng).addTo(map).bindPopup("End").openPopup();
   });
 };
 
@@ -129,9 +151,10 @@ document.getElementById('routeBtn').onclick = function() {
   if (!startPoint || !endPoint) return alert("Select start and end points first.");
   let startId = getClosestNode(startPoint);
   let endId = getClosestNode(endPoint);
+  if (!graph[startId] || !graph[endId]) return alert("Start or End point not near any road segment.");
   let path = dijkstra(startId, endId);
   if (path.length < 2) return alert("No path found.");
-  L.polyline(path, {color: 'blue'}).addTo(map);
+  L.polyline(path, { color: 'blue' }).addTo(map);
 };
 </script>
 </body>
