@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Jeddah Route Finder (Persistent Tiles)</title>
+  <title>Jeddah Route Finder (Persistent Tiles Fixed)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -29,11 +29,19 @@ const SNAP_RADIUS = 0.0005;
 let map = L.map('map').setView([21.65, 39.2], 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-let graph = {}, startPoint = null, endPoint = null;
+let graph = {}, allCoords = new Set();
+let startPoint = null, endPoint = null;
 let startMarker = null, endMarker = null;
 let snapStartMarker = null, snapEndMarker = null;
-let allCoords = new Set();
 let debugLayer = L.layerGroup().addTo(map);
+let geoLayerGroup = L.layerGroup().addTo(map);
+
+function resetGraph() {
+  graph = {};
+  allCoords = new Set();
+  debugLayer.clearLayers();
+  geoLayerGroup.clearLayers();
+}
 
 function toId(coord) {
   return coord[0].toFixed(6) + "," + coord[1].toFixed(6);
@@ -79,7 +87,7 @@ function drawGraph() {
 }
 
 function handleGeoJSON(data) {
-  L.geoJSON(data, {
+  let layer = L.geoJSON(data, {
     onEachFeature: function (feature) {
       let coords = feature.geometry.coordinates;
       if (feature.geometry.type === "LineString") {
@@ -91,7 +99,8 @@ function handleGeoJSON(data) {
         }
       }
     }
-  }).addTo(map);
+  });
+  geoLayerGroup.addLayer(layer);
 }
 
 function getClosestNode(latlng) {
@@ -149,9 +158,13 @@ document.getElementById('fileInput').addEventListener('change', function (e) {
   for (let file of e.target.files) {
     let reader = new FileReader();
     reader.onload = function (e) {
-      let geo = JSON.parse(e.target.result);
-      localStorage.setItem("geojson:" + file.name, JSON.stringify(geo));
-      handleGeoJSON(geo);
+      try {
+        let geo = JSON.parse(e.target.result);
+        localStorage.setItem("geojson:" + file.name, JSON.stringify(geo));
+        handleGeoJSON(geo);
+      } catch (err) {
+        alert("Failed to read " + file.name);
+      }
     };
     reader.readAsText(file);
   }
@@ -161,7 +174,8 @@ document.getElementById('clearBtn').onclick = function () {
   Object.keys(localStorage).forEach(key => {
     if (key.startsWith("geojson:")) localStorage.removeItem(key);
   });
-  alert("Saved tiles cleared. Please refresh.");
+  resetGraph();
+  alert("Saved tiles cleared. Please refresh or reupload.");
 };
 
 document.getElementById('startBtn').onclick = function () {
@@ -210,7 +224,7 @@ document.getElementById('routeBtn').onclick = function () {
   L.polyline(route, { color: 'blue' }).addTo(map);
 };
 
-// Load from cache on startup
+// Load tiles on startup
 loadFromStorage();
 </script>
 </body>
