@@ -24,6 +24,7 @@
   <input type="file" id="fileInput" multiple><br><br>
   <button id="startBtn">Select Start</button>
   <button id="endBtn">Select End</button>
+  <button id="waypointBtn">Add Waypoint</button>
   <button id="routeBtn">Find Route</button>
   <button id="debugBtn">Toggle Graph Debug</button>
   <button id="blockModeBtn">🔧 Toggle Block Mode</button>
@@ -40,7 +41,7 @@ let graph = {}, startPoint = null, endPoint = null;
 let waypoints = [];
 let blockedEdges = new Set();
 let blockMode = false;
-let startMarker = null, endMarker = null, snapStartMarker = null, snapEndMarker = null;
+let selectingMode = null; // "start" | "end" | "waypoint"
 let allCoords = new Set();
 let debugLayer = L.layerGroup().addTo(map);
 
@@ -80,18 +81,21 @@ function drawGraph() {
   debugLayer.clearLayers();
   for (let aid in graph) {
     let a = aid.split(',').map(Number);
-    L.circleMarker(a, { radius: 2, color: '#999' }).addTo(debugLayer);
-    for (let { coord: b } of graph[aid]) {
-      let edgeId = aid + "_" + toId(b);
-      let blocked = blockedEdges.has(edgeId) || blockedEdges.has(toId(b) + "_" + aid);
-      L.polyline([a, b], { color: blocked ? 'gray' : '#ccc', weight: 1, dashArray: blocked ? '5, 5' : null })
-        .on('click', function () {
-          if (!blockMode) return;
-          if (blockedEdges.has(edgeId)) blockedEdges.delete(edgeId);
-          else blockedEdges.add(edgeId);
-          drawGraph();
-        })
-        .addTo(debugLayer);
+    for (let { coord: b, id: bid } of graph[aid]) {
+      let edgeId = aid + "_" + bid;
+      let blocked = blockedEdges.has(edgeId) || blockedEdges.has(bid + "_" + aid);
+      let poly = L.polyline([a, b], {
+        color: blocked ? 'gray' : '#ccc',
+        weight: 2,
+        dashArray: blocked ? '5, 5' : null
+      });
+      poly.on('click', () => {
+        if (!blockMode) return;
+        if (blockedEdges.has(edgeId)) blockedEdges.delete(edgeId);
+        else blockedEdges.add(edgeId);
+        drawGraph();
+      });
+      poly.addTo(debugLayer);
     }
   }
 }
@@ -176,12 +180,19 @@ function calculateRoute(points) {
 map.on('click', function (e) {
   let id = getClosestNode(e.latlng);
   if (!id) return alert("No nearby road node found.");
-  waypoints.push(id);
-  let marker = L.circleMarker(id.split(',').map(Number), {
-    color: waypoints.length === 1 ? 'green' : waypoints.length === 2 ? 'red' : 'purple',
-    radius: 6
-  }).addTo(map).bindPopup(waypoints.length === 1 ? 'Start' : waypoints.length === 2 ? 'End' : `WP${waypoints.length - 2}`).openPopup();
-  if (waypoints.length >= 2) calculateRoute(waypoints);
+  if (blockMode) return; // disable placing points in block mode
+  if (selectingMode === "start") {
+    waypoints = [id];
+    L.circleMarker(id.split(',').map(Number), { color: 'green', radius: 6 }).addTo(map).bindPopup('Start').openPopup();
+  } else if (selectingMode === "end") {
+    waypoints.push(id);
+    L.circleMarker(id.split(',').map(Number), { color: 'red', radius: 6 }).addTo(map).bindPopup('End').openPopup();
+    calculateRoute(waypoints);
+  } else if (selectingMode === "waypoint") {
+    waypoints.splice(waypoints.length - 1, 0, id);
+    L.circleMarker(id.split(',').map(Number), { color: 'purple', radius: 6 }).addTo(map).bindPopup(`WP${waypoints.length - 2}`).openPopup();
+    calculateRoute(waypoints);
+  }
 });
 
 // Event Listeners
@@ -197,14 +208,20 @@ document.getElementById('fileInput').addEventListener('change', function (e) {
   }
 });
 
-document.getElementById('debugBtn').onclick = function () {
+document.getElementById('startBtn').onclick = () => { selectingMode = "start"; alert("Click on map to set START point."); };
+document.getElementById('endBtn').onclick = () => { selectingMode = "end"; alert("Click on map to set END point."); };
+document.getElementById('waypointBtn').onclick = () => { selectingMode = "waypoint"; alert("Click on map to add WAYPOINT."); };
+
+document.getElementById('debugBtn').onclick = () => {
   if (map.hasLayer(debugLayer)) map.removeLayer(debugLayer);
   else { drawGraph(); map.addLayer(debugLayer); }
 };
 
 document.getElementById('blockModeBtn').onclick = function () {
   blockMode = !blockMode;
+  selectingMode = null;
   alert("Block Mode: " + (blockMode ? "ON" : "OFF"));
+  drawGraph();
 };
 </script>
 </body>
