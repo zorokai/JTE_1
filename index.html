@@ -11,6 +11,12 @@
       position: absolute; top: 10px; left: 10px; z-index: 9999;
       background: white; padding: 10px; border-radius: 6px;
     }
+    #steps {
+      position: absolute; bottom: 10px; left: 10px; z-index: 9999;
+      background: white; padding: 10px; border-radius: 6px;
+      max-height: 30%; overflow-y: auto;
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
@@ -20,7 +26,9 @@
   <button id="endBtn">Select End</button>
   <button id="routeBtn">Find Route</button>
   <button id="debugBtn">Toggle Graph Debug</button>
+  <button id="blockModeBtn">🔧 Toggle Block Mode</button>
 </div>
+<div id="steps"><strong>Steps:</strong><br><ul id="stepList"></ul></div>
 <div id="map"></div>
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
@@ -29,8 +37,10 @@ let map = L.map('map').setView([21.65, 39.2], 11);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
 let graph = {}, startPoint = null, endPoint = null;
-let startMarker = null, endMarker = null;
-let snapStartMarker = null, snapEndMarker = null;
+let waypoints = [];
+let blockedEdges = new Set();
+let blockMode = false;
+let startMarker = null, endMarker = null, snapStartMarker = null, snapEndMarker = null;
 let allCoords = new Set();
 let debugLayer = L.layerGroup().addTo(map);
 
@@ -72,7 +82,16 @@ function drawGraph() {
     let a = aid.split(',').map(Number);
     L.circleMarker(a, { radius: 2, color: '#999' }).addTo(debugLayer);
     for (let { coord: b } of graph[aid]) {
-      L.polyline([a, b], { color: '#ccc', weight: 1 }).addTo(debugLayer);
+      let edgeId = aid + "_" + toId(b);
+      let blocked = blockedEdges.has(edgeId) || blockedEdges.has(toId(b) + "_" + aid);
+      L.polyline([a, b], { color: blocked ? 'gray' : '#ccc', weight: 1, dashArray: blocked ? '5, 5' : null })
+        .on('click', function () {
+          if (!blockMode) return;
+          if (blockedEdges.has(edgeId)) blockedEdges.delete(edgeId);
+          else blockedEdges.add(edgeId);
+          drawGraph();
+        })
+        .addTo(debugLayer);
     }
   }
 }
@@ -106,31 +125,66 @@ function getClosestNode(latlng) {
   return closest;
 }
 
-function dijkstra(start, end) {
-  let dist = {}, prev = {}, Q = new Set(Object.keys(graph));
-  for (let v of Q) dist[v] = Infinity;
-  dist[start] = 0;
-  while (Q.size > 0) {
-    let u = [...Q].reduce((a, b) => dist[a] < dist[b] ? a : b);
-    Q.delete(u);
-    if (u === end) break;
-    for (let neighbor of graph[u]) {
-      let v = neighbor.id;
-      let alt = dist[u] + distance(u.split(',').map(Number), neighbor.coord);
-      if (alt < dist[v]) {
-        dist[v] = alt;
-        prev[v] = u;
+function aStar(start, goal) {
+  let openSet = new Set([start]);
+  let cameFrom = {}, gScore = {}, fScore = {};
+  for (let v in graph) gScore[v] = fScore[v] = Infinity;
+  gScore[start] = 0;
+  fScore[start] = distance(start.split(',').map(Number), goal.split(',').map(Number));
+
+  while (openSet.size > 0) {
+    let current = [...openSet].reduce((a, b) => fScore[a] < fScore[b] ? a : b);
+    if (current === goal) {
+      let path = [], temp = current;
+      while (temp) {
+        path.unshift(temp);
+        temp = cameFrom[temp];
+      }
+      return path.map(p => p.split(',').map(Number));
+    }
+    openSet.delete(current);
+    for (let neighbor of graph[current]) {
+      let edgeId = current + "_" + neighbor.id;
+      if (blockedEdges.has(edgeId) || blockedEdges.has(neighbor.id + "_" + current)) continue;
+      let tentative_g = gScore[current] + distance(current.split(',').map(Number), neighbor.coord);
+      if (tentative_g < gScore[neighbor.id]) {
+        cameFrom[neighbor.id] = current;
+        gScore[neighbor.id] = tentative_g;
+        fScore[neighbor.id] = tentative_g + distance(neighbor.coord, goal.split(',').map(Number));
+        openSet.add(neighbor.id);
       }
     }
   }
-  let route = [], u = end;
-  while (u && prev[u]) {
-    route.unshift(u);
-    u = prev[u];
-  }
-  route.unshift(start);
-  return route.map(p => p.split(',').map(Number));
+  return [];
 }
+
+function calculateRoute(points) {
+  if (points.length < 2) return;
+  let steps = [], fullPath = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    let seg = aStar(points[i], points[i + 1]);
+    if (seg.length < 2) return alert("No path found between segment " + (i + 1));
+    fullPath.push(...(i > 0 ? seg.slice(1) : seg));
+    let dist = 0;
+    for (let j = 0; j < seg.length - 1; j++) dist += distance(seg[j], seg[j + 1]);
+    steps.push(`Follow segment ${i + 1} for ${(dist * 111).toFixed(3)} km`);
+  }
+  L.polyline(fullPath, { color: 'orange', weight: 4 }).addTo(map);
+  document.getElementById('stepList').innerHTML = steps.map(s => `<li>${s}</li>`).join('');
+}
+
+map.on('click', function (e) {
+  let id = getClosestNode(e.latlng);
+  if (!id) return alert("No nearby road node found.");
+  waypoints.push(id);
+  let marker = L.circleMarker(id.split(',').map(Number), {
+    color: waypoints.length === 1 ? 'green' : waypoints.length === 2 ? 'red' : 'purple',
+    radius: 6
+  }).addTo(map).bindPopup(waypoints.length === 1 ? 'Start' : waypoints.length === 2 ? 'End' : `WP${waypoints.length - 2}`).openPopup();
+  if (waypoints.length >= 2) calculateRoute(waypoints);
+});
+
+// Event Listeners
 
 document.getElementById('fileInput').addEventListener('change', function (e) {
   for (let file of e.target.files) {
@@ -143,50 +197,14 @@ document.getElementById('fileInput').addEventListener('change', function (e) {
   }
 });
 
-document.getElementById('startBtn').onclick = function () {
-  map.once('click', function (e) {
-    startPoint = e.latlng;
-    if (startMarker) map.removeLayer(startMarker);
-    startMarker = L.marker(e.latlng).addTo(map).bindPopup("Start").openPopup();
-  });
-};
-
-document.getElementById('endBtn').onclick = function () {
-  map.once('click', function (e) {
-    endPoint = e.latlng;
-    if (endMarker) map.removeLayer(endMarker);
-    endMarker = L.marker(e.latlng).addTo(map).bindPopup("End").openPopup();
-  });
-};
-
 document.getElementById('debugBtn').onclick = function () {
-  if (map.hasLayer(debugLayer)) {
-    map.removeLayer(debugLayer);
-  } else {
-    drawGraph();
-    map.addLayer(debugLayer);
-  }
+  if (map.hasLayer(debugLayer)) map.removeLayer(debugLayer);
+  else { drawGraph(); map.addLayer(debugLayer); }
 };
 
-document.getElementById('routeBtn').onclick = function () {
-  if (!startPoint || !endPoint) return alert("Select start and end points first.");
-  let startId = getClosestNode(startPoint);
-  let endId = getClosestNode(endPoint);
-  console.log("Start snapped to:", startId);
-  console.log("End snapped to:", endId);
-  if (snapStartMarker) map.removeLayer(snapStartMarker);
-  if (snapEndMarker) map.removeLayer(snapEndMarker);
-  snapStartMarker = L.circleMarker(startId.split(',').map(Number), { color: 'green', radius: 6 }).addTo(map).bindPopup("Snapped Start").openPopup();
-  snapEndMarker = L.circleMarker(endId.split(',').map(Number), { color: 'red', radius: 6 }).addTo(map).bindPopup("Snapped End").openPopup();
-  if (!graph[startId] || !graph[endId]) return alert("Start or End point not near any road segment.");
-  if (startId === endId) {
-    alert("Start and End are the same location.");
-    return L.circleMarker(startId.split(',').map(Number), { color: 'blue', radius: 4 }).addTo(map).bindPopup("Same Point").openPopup();
-  }
-  let route = dijkstra(startId, endId);
-  console.log("Path length:", route.length);
-  if (route.length < 2) return alert("No path found.");
-  L.polyline(route, { color: 'blue' }).addTo(map);
+document.getElementById('blockModeBtn').onclick = function () {
+  blockMode = !blockMode;
+  alert("Block Mode: " + (blockMode ? "ON" : "OFF"));
 };
 </script>
 </body>
