@@ -135,10 +135,23 @@ function dijkstra(start, end) {
 function renderSteps(route) {
   let ul = document.getElementById('instructions');
   ul.innerHTML = '';
+  function getDirection(a, b) {
+    let angle = Math.atan2(b[1] - a[1], b[0] - a[0]) * (180 / Math.PI);
+    if (angle < 0) angle += 360;
+    if (angle >= 337.5 || angle < 22.5) return 'East';
+    if (angle < 67.5) return 'Northeast';
+    if (angle < 112.5) return 'North';
+    if (angle < 157.5) return 'Northwest';
+    if (angle < 202.5) return 'West';
+    if (angle < 247.5) return 'Southwest';
+    if (angle < 292.5) return 'South';
+    return 'Southeast';
+  }
   for (let i = 0; i < route.length - 1; i++) {
     let d = distance(route[i], route[i+1]) * 111.32;
+    let dir = getDirection(route[i], route[i+1]);
     let li = document.createElement('li');
-    li.innerText = `Follow road for ${d.toFixed(3)} km`;
+    li.innerText = `Go ${dir} for ${d.toFixed(3)} km`;
     ul.appendChild(li);
   }
 }
